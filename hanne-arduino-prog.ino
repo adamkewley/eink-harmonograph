@@ -1,159 +1,305 @@
-/**
- *  @filename   :   epd4in2-demo.ino
- *  @brief      :   4.2inch e-paper display demo
- *  @author     :   Yehui from Waveshare
- *
- *  Copyright (C) Waveshare     August 4 2017
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documnetation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to  whom the Software is
- * furished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS OR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
 #include <SPI.h>
 #include "epd4in2.h"
 #include "imagedata.h"
 #include "epdpaint.h"
+#include <math.h>
 
 
-#define COLORED     0
-#define UNCOLORED   1
+// CONSTS
 
-#define X_PIXELS 128
-#define Y_PIXELS 64
+// screen: widths, segments, etc.
+const int SCREEN_WIDTH = 400;
+const int SCREEN_HEIGHT = 300;
+const int SEGMENT_WIDTH = 80;
+const int SEGMENT_HEIGHT = 100;
+const int SEGMENT_NUM_PIXELS = SEGMENT_WIDTH * SEGMENT_HEIGHT;
+const int SEGMENT_NUM_BYTES = (SEGMENT_NUM_PIXELS/8)+1;
+const int NUM_X_SEGMENTS = SCREEN_WIDTH/SEGMENT_WIDTH;
+const int NUM_Y_SEGMENTS = SCREEN_HEIGHT/SEGMENT_HEIGHT;
+
+// pendulum: frequencies
+const float f1 = 1.005;
+const float f2 = 2.990;
+const float f3 = 1.000;
+
+// pendulum: dampenings
+const float d1 = 2.0/1000;
+const float d2 = 1.0/1000;
+const float d3 = 0.5/1000;
+
+// pendulum: phase shifts (radians)
+const float p1x = 180.0/340.0 * M_PI;
+const float p2x = 180.0/180.0 * M_PI;
+const float p3x = 180.0/270.0 * M_PI;
+const float p1y = 180.0/180.0 * M_PI;
+const float p2y = 180.0/180.0 * M_PI;
+const float p3y = 180.0/180.8 * M_PI;
+
+// pendulum: weightings
+const float w1x = 2.8;
+const float w2x = 1.5;
+const float w3x = 1.5;
+const float w1y = 3.0;
+const float w2y = 1.0;
+const float w3y = 0.8;
+
+// screen: coordinate mappings
+const float RESULT_X_MAX = 2 * (w1x + w2x + w3x);
+const float RESULT_Y_MAX = 2 * (w1y + w2y + w3y);
+const float X_RESCALE = SCREEN_WIDTH/RESULT_X_MAX;
+const float Y_RESCALE = SCREEN_HEIGHT/RESULT_Y_MAX;
 
 
-// frequencies
-const float f1 = 0.25;//1.005;
-const float f2 = 0.75;//2.99;
-const float f3 = 0.25;//1;
+// TYPES
 
-// dampenings
-const float d1 = 2.0;
-const float d2 = 1.0;
-const float d3 = 0.5;
+struct Point {
+  float x;
+  float y;
+};
 
-// phase shifts
-const int p1x = (PI/180) * 340;
-const int p2x = (PI/180) * 180;
-const int p3x = (PI/180) * 270;
-const int p1y = (PI/180) * 180;
-const int p2y = (PI/180) * 180;
-const int p3y = (PI/180) * 180;
+struct PixelPoint {
+  int x;
+  int y;
+};
 
-// weightings
-const float A1x = 2.8;
-const float A2x = 1.5;
-const float A3x = 1.5;
-const float A1y = 3;
-const float A2y = 1;
-const float A3y = 0.8;
+struct Rect {
+  int x;
+  int y;
+  int w;
+  int h;
+};
 
-// Answers from Hanne's eqn's are in a range that needs to be rescaled for
-// pixel painting.
-const float X_RESCALE = X_PIXELS/(2*(A1x + A2x + A3x));
-const float Y_RESCALE = Y_PIXELS/(2*(A1y + A2y + A3y));
+struct AppState {
+  Epd* epd;
+  uint8_t bitbuf[SEGMENT_NUM_BYTES];
+};
 
 
-Epd epd;
+// GLOBALS
+
+AppState* appstate = nullptr;
+
+
+// FUNCS
+
+Point calc_math_coordinates(float t, float p2y) {
+  float d1t = exp(-d1*t);
+  float d2t = exp(-d2*t);
+  float d3t = exp(-d3*t);
+  
+  float x1 = w1x * sin(t*f1 + p1x) * d1t;
+  float x2 = w2x * sin(t*f2 + p2x) * d2t;
+  float x3 = w3x * sin(t*f3 + p3x) * d3t;
+
+  float y1 = w1y * sin(t*f1 + p1y) * d1t;
+  float y2 = w2y * sin(t*f2 + p2y) * d2t;
+  float y3 = w3y * sin(t*f3 + p3y) * d3t;
+
+  return {
+    .x = x1 + x2 + x3,
+    .y = y1 + y2 + y3,
+  };
+}
+
+PixelPoint calc_pixel_coordinates(float t, float p2y) {
+  Point p = calc_math_coordinates(t, p2y);
+
+  // pixel coordinates must be positive
+  p.x += (w1x + w2x + w3x);
+  p.y += (w1y + w2y + w3y);
+
+  return {
+    .x = (int)(p.x * X_RESCALE),
+    .y = (int)(p.y * Y_RESCALE), 
+  };
+}
+
+bool is_in(const Rect& bounds, int x, int y) {
+  if (bounds.x <= x && x < bounds.x + bounds.w &&
+      bounds.y <= y && y < bounds.y + bounds.h) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+void paint_pixel_into_bitbuf(const Rect& bounds, int x, int y) {
+  if (is_in(bounds, x, y)) {
+    x -= bounds.x;
+    y -= bounds.y;
+    int bitidx = x + y*bounds.w;
+        
+    appstate->bitbuf[bitidx/8] &= ~(0x80 >> (bitidx & 7));
+  }
+}
+
+void paint_line_breshenham_low(const Rect& bounds, const PixelPoint& p1, const PixelPoint& p2) {
+  // covers gradients [-1, 1] (base alg. only covers gradient of > 0)
+  int dx = p2.x - p1.x;
+  int dy = p2.y - p1.y;
+  int yi = 1;
+  if (dy < 0) {
+    yi = -1;
+    dy = -dy;
+  }
+  int D = 2*dy - dx;
+  int y = p1.y;
+
+  for (int x = p1.x; x < p2.x; ++x) {
+    paint_pixel_into_bitbuf(bounds, x, y);
+    if (D > 0) {
+      y += yi;
+      D -= 2*dx;
+    }
+    D += 2*dy;
+  }
+}
+
+void paint_line_breshenham_high(const Rect& bounds, const PixelPoint& p1, const PixelPoint& p2) {
+  // handles "steep" gradients
+  int dx = p2.x - p1.x;
+  int dy = p2.y - p1.y;
+  int xi = 1;
+  if (dx < 0) {
+    xi = -1;
+    dx = -dx;
+  }
+  int D = 2*dx - dy;
+  int x = p1.x;
+
+  for (int y = p1.y; y < p2.y; ++y) {
+    paint_pixel_into_bitbuf(bounds, x, y);
+    if (D > 0) {
+      x += xi;
+      D -= 2*dy;
+    }
+    D += 2*dx;
+  }
+}
+
+void paint_line_bresenham(const Rect& bounds, const PixelPoint& p1, const PixelPoint& p2) {
+  // covers wide & tall representations with [-1,1] gradients: base
+  // alg only covers wide representations with positive gradient
+  
+  if (abs(p2.y - p1.y) < abs (p2.x - p1.x)) {
+    // wider than it is tall (not steep)
+    if (p1.x > p2.x) {
+      paint_line_breshenham_low(bounds, p2, p1);
+    } else {
+      paint_line_breshenham_low(bounds, p1, p2);
+    }
+  } else {
+    // taller than it is wide (steep)
+    if (p1.y > p2.y) {
+      paint_line_breshenham_high(bounds, p2, p1);
+    } else {
+      paint_line_breshenham_high(bounds, p1, p2);
+    }
+  }
+}
+
+void render_line_into_bitbuf(
+  const Rect& bounds,
+  const PixelPoint& p1,
+  const PixelPoint& p2) {
+  
+  // Using a custom line painting alg. because of the screen
+  // segmentation. Line coords might fall out of bounds.
+  paint_line_bresenham(bounds, p1, p2);
+}
+
+void zero_bitbuf() {
+  for (size_t i = 0; i < SEGMENT_NUM_BYTES; ++i) {
+    appstate->bitbuf[i] = 0xff;
+  }
+}
+
+void render_bitbuf(const Rect& screen_bounds) {
+  appstate->epd->SetPartialWindow(
+    appstate->bitbuf,
+    screen_bounds.x,
+    screen_bounds.y,
+    screen_bounds.w,
+    screen_bounds.h);
+}
+
+static void render_segment(float p2y, const Rect& segment_bounds) {
+  Serial.print("rendering segment ");
+  Serial.print("x = ");
+  Serial.print(segment_bounds.x);
+  Serial.print(" y = ");
+  Serial.print(segment_bounds.y);
+  Serial.print("\n");
+  zero_bitbuf();
+  
+  PixelPoint p1 = calc_pixel_coordinates(0.0, p2y);
+  
+  for (float t = 0.3; t < 500; t += 0.3) {
+    PixelPoint p2 = calc_pixel_coordinates(t, p2y);
+    render_line_into_bitbuf(segment_bounds, p1, p2);
+    p1 = p2;
+  }
+
+  render_bitbuf(segment_bounds);
+}
+
+static void render_screen(float p2y) {
+  Serial.print("rendering screen\n");
+  Serial.print(NUM_X_SEGMENTS);
+  Serial.print('\n');
+  Serial.print(NUM_Y_SEGMENTS);
+  Serial.print('\n');
+  
+  for (int xs = 0; xs < NUM_X_SEGMENTS; ++xs) {
+    for (int ys = 0; ys < NUM_Y_SEGMENTS; ++ys) {
+      Rect segment = {
+  .x = SEGMENT_WIDTH * xs,
+  .y = SEGMENT_HEIGHT * ys,
+  .w = SEGMENT_WIDTH,
+  .h = SEGMENT_HEIGHT,
+      };
+
+      render_segment(p2y, segment);
+    }
+  }
+}
+
+static void render_clear() {
+  appstate->epd->ClearFrame();
+}
+
+static void present_screen() {
+  appstate->epd->DisplayFrame();
+}
+
+static void run(AppState* st) {
+  appstate = st;
+
+  render_clear();
+  present_screen();
+
+  for (size_t i = 0; i < 10000; ++i) {    
+    float p2y = (i/180.0) * M_PI;
+    render_screen(p2y);
+    present_screen();
+  }
+}
 
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
+  
+  AppState st = {0};
+  Epd epd;
 
   if (epd.Init() != 0) {
     Serial.print("e-Paper init failed");
     return;
   }
-}
-
-Paint init_paint(unsigned char* buf) {  
-  Paint paint(buf, X_PIXELS, Y_PIXELS); // width should be multiple of 8
-  paint.SetWidth(X_PIXELS);
-  paint.SetHeight(Y_PIXELS);
-  return paint;
-}
-
-void clear_screen() {
-  epd.ClearFrame();
-  epd.DisplayFrame();
-}
-
-void calc_math_coordinates(long t, float* xout, float* yout) {
-  float x1 = A1x * sin(t*f1 + p1x) * exp(-(d1/1000)*t);
-  float x2 = A2x * sin(t*f2 + p2x) * exp(-(d2/1000)*t);
-  float x3 = A3x * sin(t*f3 + p3x) * exp(-(d3/1000)*t);
   
-  *xout = (x1 + x2 + x3) + (A1x + A2x + A3x);
-
-  float y1 = A1y * sin(t*f1 + p1y) * exp(-(d1/1000)*t);
-  float y2 = A2y * sin(t*f2 + p2y) * exp(-(d2/1000)*t);
-  float y3 = A3y * sin(t*f3 + p3y) * exp(-(d3/1000)*t);
-  
-  *yout = (y1 + y2 + y3) + (A1y + A2y + A3y);
-}
-
-void calc_pixel_coordinates(long t, long* xout, long* yout) {
-  float x;
-  float y;
-  calc_math_coordinates(t, &x, &y);
-  
-  *xout = (int)(x * X_RESCALE);
-  *yout = (int)(y * Y_RESCALE);
-}
-
-void draw_line(Paint& p, int x1, int y1, int x2, int y2) {
-  p.DrawLine(x1, y1, x2, y2, COLORED);
-}
-
-void paint_eqn(Paint& p) {
-  long x1;
-  long y1;
-  calc_pixel_coordinates(0, &x1, &y1);
-  
-  for (long i = 1; i < 100; ++i) {
-    long t = i * 1000;
-      long x2;
-      long y2;
-      calc_pixel_coordinates(t, &x2, &y2);     
-      draw_line(p, x1, y1, x2, y2);
-      x1 = x2;
-      y1 = y2;
-  }
-}
-
-void flush_painted_eqn_to_screen(Paint& p) {
-  Serial.print("flushing");
-  epd.SetPartialWindow(p.GetImage(), 100, 40, p.GetWidth(), p.GetHeight());
-  epd.DisplayFrame();
+  st.epd = &epd;
+  run(&st);
 }
 
 void loop() {
-  clear_screen();
-
-  unsigned char image[1024];
-  Paint p = init_paint(image);
-
-  paint_eqn(p);
-
-  flush_painted_eqn_to_screen(p);
-  
-  /* This displays an image */
-  //epd.DisplayFrame(IMAGE_BUTTERFLY);
-
-  delay(10000);
 }
