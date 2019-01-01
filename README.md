@@ -5,8 +5,6 @@ Arduino-based device:
 
 ![device image](images/device-picture.jpeg)
 
-TODO IMG
-
 The code renders a harmonograph image to the screen as freqeuently as
 it can, which is around one image per minute on a standard Arduino Uno
 (the code is inefficient, but does the job). 
