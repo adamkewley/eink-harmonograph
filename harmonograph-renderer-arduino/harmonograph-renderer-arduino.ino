@@ -1,8 +1,7 @@
 #include <SPI.h>
-#include "epd4in2.h"
-#include "imagedata.h"
-#include "epdpaint.h"
 #include <math.h>
+
+#include "epd4in2.h"
 
 
 // CONSTS
@@ -10,10 +9,10 @@
 // screen: widths, segments, etc.
 const int SCREEN_WIDTH = 400;
 const int SCREEN_HEIGHT = 300;
-const int SEGMENT_WIDTH = 80;
-const int SEGMENT_HEIGHT = 100;
+const int SEGMENT_WIDTH = 400;
+const int SEGMENT_HEIGHT = 30;
 const int SEGMENT_NUM_PIXELS = SEGMENT_WIDTH * SEGMENT_HEIGHT;
-const int SEGMENT_NUM_BYTES = (SEGMENT_NUM_PIXELS/8)+1;
+const int SEGMENT_NUM_BYTES = (SEGMENT_NUM_PIXELS/8)+1;  // it's a bitbuffer
 const int NUM_X_SEGMENTS = SCREEN_WIDTH/SEGMENT_WIDTH;
 const int NUM_Y_SEGMENTS = SCREEN_HEIGHT/SEGMENT_HEIGHT;
 
@@ -28,12 +27,12 @@ const float d2 = 1.0/1000;
 const float d3 = 0.5/1000;
 
 // pendulum: phase shifts (radians)
-const float p1x = 180.0/340.0 * M_PI;
+const float p1x = 95.0/180.0 * M_PI;
 const float p2x = 180.0/180.0 * M_PI;
-const float p3x = 180.0/270.0 * M_PI;
+const float p3x = 120.0/180.0 * M_PI;
 const float p1y = 180.0/180.0 * M_PI;
 const float p2y = 180.0/180.0 * M_PI;
-const float p3y = 180.0/180.8 * M_PI;
+const float p3y = 180.0/180.0 * M_PI;
 
 // pendulum: weightings
 const float w1x = 2.8;
@@ -224,17 +223,11 @@ void render_bitbuf(const Rect& screen_bounds) {
 }
 
 static void render_segment(float p2y, const Rect& segment_bounds) {
-  Serial.print("rendering segment ");
-  Serial.print("x = ");
-  Serial.print(segment_bounds.x);
-  Serial.print(" y = ");
-  Serial.print(segment_bounds.y);
-  Serial.print("\n");
   zero_bitbuf();
   
   PixelPoint p1 = calc_pixel_coordinates(0.0, p2y);
   
-  for (float t = 0.3; t < 500; t += 0.3) {
+  for (float t = 0.15; t < 500; t += 0.15) {
     PixelPoint p2 = calc_pixel_coordinates(t, p2y);
     render_line_into_bitbuf(segment_bounds, p1, p2);
     p1 = p2;
@@ -243,20 +236,14 @@ static void render_segment(float p2y, const Rect& segment_bounds) {
   render_bitbuf(segment_bounds);
 }
 
-static void render_screen(float p2y) {
-  Serial.print("rendering screen\n");
-  Serial.print(NUM_X_SEGMENTS);
-  Serial.print('\n');
-  Serial.print(NUM_Y_SEGMENTS);
-  Serial.print('\n');
-  
-  for (int xs = 0; xs < NUM_X_SEGMENTS; ++xs) {
-    for (int ys = 0; ys < NUM_Y_SEGMENTS; ++ys) {
+static void render_screen(float p2y) {  
+  for (int xs = NUM_X_SEGMENTS-1; xs >= 0; --xs) {
+    for (int ys = NUM_Y_SEGMENTS-1; ys >= 0; --ys) {
       Rect segment = {
-  .x = SEGMENT_WIDTH * xs,
-  .y = SEGMENT_HEIGHT * ys,
-  .w = SEGMENT_WIDTH,
-  .h = SEGMENT_HEIGHT,
+        .x = SEGMENT_WIDTH * xs,
+        .y = SEGMENT_HEIGHT * ys,
+        .w = SEGMENT_WIDTH,
+        .h = SEGMENT_HEIGHT,
       };
 
       render_segment(p2y, segment);
@@ -278,7 +265,7 @@ static void run(AppState* st) {
   render_clear();
   present_screen();
 
-  for (size_t i = 0; i < 10000; ++i) {    
+  for (size_t i = 0; ; i += 20) {    
     float p2y = (i/180.0) * M_PI;
     render_screen(p2y);
     present_screen();
@@ -298,6 +285,7 @@ void setup() {
   }
   
   st.epd = &epd;
+  
   run(&st);
 }
 
