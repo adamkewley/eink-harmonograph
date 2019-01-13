@@ -11,7 +11,7 @@ namespace {
   const pixelcoord_t SCREEN_WIDTH = 400;
   const pixelcoord_t SCREEN_HEIGHT = 300;
   const pixelcoord_t SEGMENT_WIDTH = 400;
-  const pixelcoord_t SEGMENT_HEIGHT = 30;
+  const pixelcoord_t SEGMENT_HEIGHT = 300;
   const int SEGMENT_NUM_PIXELS = SEGMENT_WIDTH * SEGMENT_HEIGHT;
   const int SEGMENT_NUM_BYTES = (SEGMENT_NUM_PIXELS/8)+1;
   const int NUM_X_SEGMENTS = SCREEN_WIDTH/SEGMENT_WIDTH;
@@ -98,9 +98,7 @@ namespace {
     std::array<uint8_t, SEGMENT_NUM_BYTES> buf;
 
     void zero() {
-      for (size_t i = 0; i < SEGMENT_NUM_BYTES; ++i) {
-	buf[i] = 0x00;
-      }
+      std::fill(std::begin(buf), std::end(buf), 0);
     }
 
     void paint_pixel(const Rect& bounds, const PixelPoint& p) {
@@ -221,6 +219,33 @@ namespace {
     },
   };
 
+  const Harmonograph TRIANGLE = {
+    .a = {
+      .frequency = 1.99,
+      .phase_y = 90.0/180.0 * M_PI,
+      .phase_x = 180.0/180.0 * M_PI,
+      .dampening = 3.0/1000,
+      .amplitude_x = 0.6 * (SCREEN_WIDTH/2),
+      .amplitude_y = 0.6 * (SCREEN_HEIGHT/2),
+    },
+    .b = {
+      .frequency = 0.99,
+      .phase_y = 90.0/180.0 * M_PI,
+      .phase_x = 360.0/180.0 * M_PI,
+      .dampening = 3.0/1000,
+      .amplitude_x = 0.20 * (SCREEN_WIDTH/2),
+      .amplitude_y = 0.20 * (SCREEN_HEIGHT/2),
+    },
+    .c = {
+      .frequency = 1.00,
+      .phase_y = 180.0/180.0 * M_PI,
+      .phase_x = 270.0/180.0 * M_PI,
+      .dampening = 1.0/1000,
+      .amplitude_x = 0.20 * (SCREEN_WIDTH/2),
+      .amplitude_y = 0.20 * (SCREEN_HEIGHT/2),
+    },
+  };
+
 
   // This struct is designed so that its implementation can be
   // switched out when this code is ported to hardware.
@@ -334,7 +359,16 @@ namespace {
   }
 
   void tick(size_t i, Harmonograph& harmonograph) {
-    harmonograph.b.phase_y = (i/180.0) * M_PI;
+    static float a_dir = 1.0;
+    
+    harmonograph.b.phase_y += (1/180.0) * M_PI;
+    harmonograph.b.phase_x += (2/180.0) * M_PI;
+
+    harmonograph.b.frequency += a_dir*0.0001;
+
+    if (std::abs(harmonograph.a.frequency) > 15) {
+      a_dir *= -1.0;
+    }
   }
 
   void run(AppState& st) {
