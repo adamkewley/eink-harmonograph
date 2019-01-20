@@ -1,293 +1,328 @@
-#include <SPI.h>
 #include <math.h>
 
+#include <SPI.h>
 #include "epd4in2.h"
 
 
-// CONSTS
-
-// screen: widths, segments, etc.
-const int SCREEN_WIDTH = 400;
-const int SCREEN_HEIGHT = 300;
-const int SEGMENT_WIDTH = 400;
-const int SEGMENT_HEIGHT = 30;
-const int SEGMENT_NUM_PIXELS = SEGMENT_WIDTH * SEGMENT_HEIGHT;
-const int SEGMENT_NUM_BYTES = (SEGMENT_NUM_PIXELS/8)+1;  // it's a bitbuffer
-const int NUM_X_SEGMENTS = SCREEN_WIDTH/SEGMENT_WIDTH;
-const int NUM_Y_SEGMENTS = SCREEN_HEIGHT/SEGMENT_HEIGHT;
-
-// pendulum: frequencies
-const float f1 = 1.005;
-const float f2 = 2.990;
-const float f3 = 1.000;
-
-// pendulum: dampenings
-const float d1 = 2.0/1000;
-const float d2 = 1.0/1000;
-const float d3 = 0.5/1000;
-
-// pendulum: phase shifts (radians)
-const float p1x = 95.0/180.0 * M_PI;
-const float p2x = 180.0/180.0 * M_PI;
-const float p3x = 120.0/180.0 * M_PI;
-const float p1y = 180.0/180.0 * M_PI;
-const float p2y = 180.0/180.0 * M_PI;
-const float p3y = 180.0/180.0 * M_PI;
-
-// pendulum: weightings
-const float w1x = 2.8;
-const float w2x = 1.5;
-const float w3x = 1.5;
-const float w1y = 3.0;
-const float w2y = 1.0;
-const float w3y = 0.8;
-
-// screen: coordinate mappings
-const float RESULT_X_MAX = 2 * (w1x + w2x + w3x);
-const float RESULT_Y_MAX = 2 * (w1y + w2y + w3y);
-const float X_RESCALE = SCREEN_WIDTH/RESULT_X_MAX;
-const float Y_RESCALE = SCREEN_HEIGHT/RESULT_Y_MAX;
-
-
-// TYPES
-
-struct Point {
-  float x;
-  float y;
-};
-
-struct PixelPoint {
-  int x;
-  int y;
-};
-
-struct Rect {
-  int x;
-  int y;
-  int w;
-  int h;
-};
-
-struct AppState {
-  Epd* epd;
-  uint8_t bitbuf[SEGMENT_NUM_BYTES];
-};
-
-
-// GLOBALS
-
-AppState* appstate = nullptr;
-
-
-// FUNCS
-
-Point calc_math_coordinates(float t, float p2y) {
-  float d1t = exp(-d1*t);
-  float d2t = exp(-d2*t);
-  float d3t = exp(-d3*t);
+namespace {
+    using pixelcoord_t = uint16_t;
   
-  float x1 = w1x * sin(t*f1 + p1x) * d1t;
-  float x2 = w2x * sin(t*f2 + p2x) * d2t;
-  float x3 = w3x * sin(t*f3 + p3x) * d3t;
+    // screen: widths, segments, etc.
+    const pixelcoord_t SCREEN_WIDTH = 400;
+    const pixelcoord_t SCREEN_HEIGHT = 300;
+    const pixelcoord_t SEGMENT_WIDTH = 400;
+    const pixelcoord_t SEGMENT_HEIGHT = 30;
+    const int SEGMENT_NUM_PIXELS = SEGMENT_WIDTH * SEGMENT_HEIGHT;
+    const int SEGMENT_NUM_BYTES = (SEGMENT_NUM_PIXELS/8)+1;
+    const int NUM_X_SEGMENTS = SCREEN_WIDTH/SEGMENT_WIDTH;
+    const int NUM_Y_SEGMENTS = SCREEN_HEIGHT/SEGMENT_HEIGHT;
+    const float START_TIME = 0.0;
+    const float TIME_STEP = 0.3;
+    const float MAX_TIME = 500.0;
 
-  float y1 = w1y * sin(t*f1 + p1y) * d1t;
-  float y2 = w2y * sin(t*f2 + p2y) * d2t;
-  float y3 = w3y * sin(t*f3 + p3y) * d3t;
+  
+    // TYPES
 
-  return {
-    .x = x1 + x2 + x3,
-    .y = y1 + y2 + y3,
-  };
-}
+    template<typename T>
+    struct Point {
+        T x;
+        T y;
 
-PixelPoint calc_pixel_coordinates(float t, float p2y) {
-  Point p = calc_math_coordinates(t, p2y);
+        Point<T> operator +(const Point<T>& o) {
+            return { .x = x + o.x, .y = y + o.y };
+        }
+    };
 
-  // pixel coordinates must be positive
-  p.x += (w1x + w2x + w3x);
-  p.y += (w1y + w2y + w3y);
+    using FunctionPoint = Point<float>;
+    using PixelPoint = Point<pixelcoord_t>;
 
-  return {
-    .x = (int)(p.x * X_RESCALE),
-    .y = (int)(p.y * Y_RESCALE), 
-  };
-}
+    struct Rect {
+        pixelcoord_t x;
+        pixelcoord_t y;
+        pixelcoord_t w;
+        pixelcoord_t h;
 
-bool is_in(const Rect& bounds, int x, int y) {
-  if (bounds.x <= x && x < bounds.x + bounds.w &&
-      bounds.y <= y && y < bounds.y + bounds.h) {
-    return true;
-  } else {
-    return false;
-  }
-}
+        bool contains(const PixelPoint& p) const {
+            if (x <= p.x && p.x < x + w &&
+                y <= p.y && p.y < y + h) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+    };
 
-void paint_pixel_into_bitbuf(const Rect& bounds, int x, int y) {
-  if (is_in(bounds, x, y)) {
-    x -= bounds.x;
-    y -= bounds.y;
-    int bitidx = x + y*bounds.w;
+    struct HarmonographPendulum {
+        float frequency;
+        float phase_y;
+        float phase_x;
+        float dampening;
+        float amplitude_x;
+        float amplitude_y;
+
+        FunctionPoint pos(float t) const {
+            float dt = expf(-dampening * t);
+      
+            float x = amplitude_x * sinf(t*frequency + phase_x) * dt;
+            float y = amplitude_y * sinf(t*frequency + phase_y) * dt;
+
+            // Rescale function to always be positive (screen coords)
+            return {
+                .x = x + amplitude_x,
+                    .y = y + amplitude_y,
+                    };
+        }
+    };
+
+    struct Harmonograph {
+        HarmonographPendulum a;
+        HarmonographPendulum b;
+        HarmonographPendulum c;
+
+        FunctionPoint pos(float t) const {
+            return a.pos(t) + b.pos(t) + c.pos(t);
+        }
+
+        PixelPoint pixel_pos(float t) const {
+            FunctionPoint p = pos(t);
+
+            return {
+                .x = static_cast<pixelcoord_t>(p.x),
+                    .y = static_cast<pixelcoord_t>(p.y),
+                    };
+        }
+    };
+
+    // `buf` is in a format as used by hardware.
+    struct ScreenBuf {
+        uint8_t buf[SEGMENT_NUM_BYTES];
+
+        void zero() {
+            for (size_t i = 0; i < sizeof(buf); ++i) {
+                buf[i] = 0x00;
+            }
+        }
+
+        void paint_pixel(const Rect& bounds, const PixelPoint& p) {
+            if (bounds.contains(p)) {
+                pixelcoord_t bitbuf_x = p.x - bounds.x;
+                pixelcoord_t bitbuf_y = p.y - bounds.y;
+    
+                size_t  bitidx = bitbuf_y*bounds.w + bitbuf_x;
+                size_t byteidx = bitidx / 8;
+                size_t bytebitidx = bitidx & 7;
+    
+                buf[byteidx] |= (0x1 << bytebitidx);
+            }
+        }
+
+        void paint_line_breshenham_low(const Rect& bounds, const PixelPoint& p1, const PixelPoint& p2) {
+            // covers gradients [-1, 1] (base alg. only covers gradient of > 0)
+            int dx = p2.x - p1.x;
+            int dy = p2.y - p1.y;
+            int yi = 1;
+            if (dy < 0) {
+                yi = -1;
+                dy = -dy;
+            }
+            int D = 2*dy - dx;
+      
+            pixelcoord_t y = p1.y;
+
+            for (pixelcoord_t x = p1.x; x < p2.x; ++x) {
+                PixelPoint p = { .x = x, .y = y };
+                paint_pixel(bounds, p);
+                if (D > 0) {
+                    y += yi;
+                    D -= 2*dx;
+                }
+                D += 2*dy;
+            }
+        }
+
+        void paint_line_breshenham_high(const Rect& bounds, const PixelPoint& p1, const PixelPoint& p2) {
+            // handles "steep" gradients
+            int dx = p2.x - p1.x;
+            int dy = p2.y - p1.y;
+            int xi = 1;
+            if (dx < 0) {
+                xi = -1;
+                dx = -dx;
+            }
+            int D = 2*dx - dy;
+            pixelcoord_t x = p1.x;
+
+            for (pixelcoord_t y = p1.y; y < p2.y; ++y) {
+                PixelPoint p = { .x = x, .y = y };
+                paint_pixel(bounds, p);
+                if (D > 0) {
+                    x += xi;
+                    D -= 2*dy;
+                }
+                D += 2*dx;
+            }
+        }
+
+        void paint_line(
+                        const Rect& bounds,
+                        const PixelPoint& p1,
+                        const PixelPoint& p2) {
+
+            // Using a custom line painting alg. because of the screen
+            // segmentation. Line coords might fall out of bounds.
+
+            // Breshenham alg.
+
+            // covers wide & tall representations with [-1,1] gradients: base
+            // alg only covers wide representations with positive gradient
+      
+            if (abs(p2.y - p1.y) < abs (p2.x - p1.x)) {
+                // wider than it is tall (not steep)
+                if (p1.x > p2.x) {
+                    paint_line_breshenham_low(bounds, p2, p1);
+                } else {
+                    paint_line_breshenham_low(bounds, p1, p2);
+                }
+            } else {
+                // taller than it is wide (steep)
+                if (p1.y > p2.y) {
+                    paint_line_breshenham_high(bounds, p2, p1);
+                } else {
+                    paint_line_breshenham_high(bounds, p1, p2);
+                }
+            }
+        }
+    };
+
+    const Harmonograph STARTING_PARAMS = {
+        .a = {
+            .frequency = 1.005,
+            .phase_y = 180.0/180.0 * M_PI,
+            .phase_x = 95.0/180.0 * M_PI,
+            .dampening = 2.0/1000,
+            .amplitude_x = 0.483 * (SCREEN_WIDTH/2),
+            .amplitude_y = 0.625 * (SCREEN_HEIGHT/2),
+        },
+        .b = {
+            .frequency = 0.990,
+            .phase_y = 180.0/180.0 * M_PI,
+            .phase_x = 180.0/180.0 * M_PI,
+            .dampening = 1.0/1000,
+            .amplitude_x = 0.2586 * (SCREEN_WIDTH/2),
+            .amplitude_y = 0.2083 * (SCREEN_HEIGHT/2),
+        },
+        .c = {
+            .frequency = 1.000,
+            .phase_y = 180.0/180.0 * M_PI,
+            .phase_x = 120.0/180.0 * M_PI,
+            .dampening = 0.5/1000,
+            .amplitude_x = 0.2586 * (SCREEN_WIDTH/2),
+            .amplitude_y = 0.1667 * (SCREEN_HEIGHT/2),
+        },
+    };
+
+    // This struct is designed so that its implementation can be
+    // switched out when this code is ported to hardware.
+    struct AppState {
+        Epd epd;
         
-    appstate->bitbuf[bitidx/8] &= ~(0x80 >> (bitidx & 7));
-  }
-}
+        AppState() {
+            epd.Init();
+        }
 
-void paint_line_breshenham_low(const Rect& bounds, const PixelPoint& p1, const PixelPoint& p2) {
-  // covers gradients [-1, 1] (base alg. only covers gradient of > 0)
-  int dx = p2.x - p1.x;
-  int dy = p2.y - p1.y;
-  int yi = 1;
-  if (dy < 0) {
-    yi = -1;
-    dy = -dy;
-  }
-  int D = 2*dy - dx;
-  int y = p1.y;
+        void render(const Rect& screen_bounds, uint8_t* buf) {
+          epd.SetPartialWindow(
+              buf, 
+              screen_bounds.x, 
+              screen_bounds.y, 
+              screen_bounds.w, 
+              screen_bounds.h);
+        }
+    
+        void render_clear() {
+            epd.ClearFrame();
+        }
 
-  for (int x = p1.x; x < p2.x; ++x) {
-    paint_pixel_into_bitbuf(bounds, x, y);
-    if (D > 0) {
-      y += yi;
-      D -= 2*dx;
-    }
-    D += 2*dy;
-  }
-}
+        void render_present() {
+            epd.DisplayFrame();
+        }
+    };
 
-void paint_line_breshenham_high(const Rect& bounds, const PixelPoint& p1, const PixelPoint& p2) {
-  // handles "steep" gradients
-  int dx = p2.x - p1.x;
-  int dy = p2.y - p1.y;
-  int xi = 1;
-  if (dx < 0) {
-    xi = -1;
-    dx = -dx;
-  }
-  int D = 2*dx - dy;
-  int x = p1.x;
-
-  for (int y = p1.y; y < p2.y; ++y) {
-    paint_pixel_into_bitbuf(bounds, x, y);
-    if (D > 0) {
-      x += xi;
-      D -= 2*dy;
-    }
-    D += 2*dx;
-  }
-}
-
-void paint_line_bresenham(const Rect& bounds, const PixelPoint& p1, const PixelPoint& p2) {
-  // covers wide & tall representations with [-1,1] gradients: base
-  // alg only covers wide representations with positive gradient
+    void paint_segment(
+                       const Harmonograph& params,
+                       const Rect& segment_bounds,
+                       ScreenBuf& screenbuf) {
+    
+        PixelPoint p1 = params.pixel_pos(START_TIME);
   
-  if (abs(p2.y - p1.y) < abs (p2.x - p1.x)) {
-    // wider than it is tall (not steep)
-    if (p1.x > p2.x) {
-      paint_line_breshenham_low(bounds, p2, p1);
-    } else {
-      paint_line_breshenham_low(bounds, p1, p2);
+        for (float t = START_TIME + TIME_STEP; t < MAX_TIME; t += TIME_STEP) {
+            PixelPoint p2 = params.pixel_pos(t);
+            screenbuf.paint_line(segment_bounds, p1, p2);
+            p1 = p2;
+        }
     }
-  } else {
-    // taller than it is wide (steep)
-    if (p1.y > p2.y) {
-      paint_line_breshenham_high(bounds, p2, p1);
-    } else {
-      paint_line_breshenham_high(bounds, p1, p2);
+  
+    // FUNCS
+    void render_screen(
+                       const Harmonograph& params,
+                       ScreenBuf& screenbuf,
+                       AppState& st) {
+
+        // The screen needs to be rendered as a bunch of separate
+        // non-overlapping segments because an Arduino can't hold an entire
+        // screen in memory.
+        for (pixelcoord_t xs = 0; xs < NUM_X_SEGMENTS; ++xs) {
+            for (pixelcoord_t ys = 0; ys < NUM_Y_SEGMENTS; ++ys) {
+                Rect segment = {
+                    .x = SEGMENT_WIDTH * xs,
+                    .y = SEGMENT_HEIGHT * ys,
+                    .w = SEGMENT_WIDTH,
+                    .h = SEGMENT_HEIGHT,
+                };
+
+                screenbuf.zero();
+                paint_segment(params, segment, screenbuf);
+                st.render(segment, screenbuf.buf);
+            }
+        }
     }
-  }
-}
 
-void render_line_into_bitbuf(
-  const Rect& bounds,
-  const PixelPoint& p1,
-  const PixelPoint& p2) {
-  
-  // Using a custom line painting alg. because of the screen
-  // segmentation. Line coords might fall out of bounds.
-  paint_line_bresenham(bounds, p1, p2);
-}
+    void tick(size_t i, Harmonograph& harmonograph) {
+        static float phase_dir = 1.0;
+        static float fq_dir = 1.0;    
+    
+        harmonograph.b.phase_y += phase_dir * (1/180.0) * M_PI;
+        harmonograph.b.phase_x += phase_dir * (1/180.0) * M_PI;
 
-void zero_bitbuf() {
-  for (size_t i = 0; i < SEGMENT_NUM_BYTES; ++i) {
-    appstate->bitbuf[i] = 0xff;
-  }
-}
-
-void render_bitbuf(const Rect& screen_bounds) {
-  appstate->epd->SetPartialWindow(
-    appstate->bitbuf,
-    screen_bounds.x,
-    screen_bounds.y,
-    screen_bounds.w,
-    screen_bounds.h);
-}
-
-static void render_segment(float p2y, const Rect& segment_bounds) {
-  zero_bitbuf();
-  
-  PixelPoint p1 = calc_pixel_coordinates(0.0, p2y);
-  
-  for (float t = 0.15; t < 500; t += 0.15) {
-    PixelPoint p2 = calc_pixel_coordinates(t, p2y);
-    render_line_into_bitbuf(segment_bounds, p1, p2);
-    p1 = p2;
-  }
-
-  render_bitbuf(segment_bounds);
-}
-
-static void render_screen(float p2y) {  
-  for (int xs = NUM_X_SEGMENTS-1; xs >= 0; --xs) {
-    for (int ys = NUM_Y_SEGMENTS-1; ys >= 0; --ys) {
-      Rect segment = {
-        .x = SEGMENT_WIDTH * xs,
-        .y = SEGMENT_HEIGHT * ys,
-        .w = SEGMENT_WIDTH,
-        .h = SEGMENT_HEIGHT,
-      };
-
-      render_segment(p2y, segment);
+        if (abs(harmonograph.b.phase_y) > 2*M_PI) {
+            phase_dir *= -1.0;
+            harmonograph.c.frequency += fq_dir;
+        
+            if (abs(harmonograph.c.frequency) > 3) {
+                fq_dir *= -1.0;
+            }
+        }
     }
-  }
-}
 
-static void render_clear() {
-  appstate->epd->ClearFrame();
-}
+    void run(AppState& st) {
+        ScreenBuf screenbuf;
+        Harmonograph harmonograph = STARTING_PARAMS;
+    
+        for (size_t i = 0;; ++i) {
+            tick(i, harmonograph);
 
-static void present_screen() {
-  appstate->epd->DisplayFrame();
-}
-
-static void run(AppState* st) {
-  appstate = st;
-
-  render_clear();
-  present_screen();
-
-  for (size_t i = 0; ; i += 20) {    
-    float p2y = (i/180.0) * M_PI;
-    render_screen(p2y);
-    present_screen();
-  }
+            st.render_clear();
+            render_screen(harmonograph, screenbuf, st);
+            st.render_present();
+        }
+    }
 }
 
 void setup() {
-  // put your setup code here, to run once:
-  Serial.begin(9600);
-  
-  AppState st = {0};
-  Epd epd;
-
-  if (epd.Init() != 0) {
-    Serial.print("e-Paper init failed");
-    return;
-  }
-  
-  st.epd = &epd;
-  
-  run(&st);
+    AppState st;
+    run(st);
 }
 
 void loop() {
+  // Setup code runs this
 }
