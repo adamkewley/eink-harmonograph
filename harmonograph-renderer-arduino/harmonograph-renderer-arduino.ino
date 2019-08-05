@@ -17,8 +17,8 @@ namespace {
     const int NUM_X_SEGMENTS = SCREEN_WIDTH/SEGMENT_WIDTH;
     const int NUM_Y_SEGMENTS = SCREEN_HEIGHT/SEGMENT_HEIGHT;
     const float START_TIME = 0.0;
-    const float TIME_STEP = 0.3;
-    const float MAX_TIME = 500.0;
+    const float TIME_STEP = 0.2;
+    const float MAX_TIME = 600.0;
 
   
     // TYPES
@@ -289,27 +289,26 @@ namespace {
     }
 
     void tick(size_t i, Harmonograph& harmonograph) {
-        static float phase_dir = 1.0;
-        static float fq_dir = 1.0;    
-    
-        harmonograph.b.phase_y += phase_dir * (1/180.0) * M_PI;
-        harmonograph.b.phase_x += phase_dir * (1/180.0) * M_PI;
+        static const float fq_lut[] = {
+          0.995,
+          1.005,
+          1.5,
+          2.010,
+          2.503,
+          3.000,
+        };
 
-        if (abs(harmonograph.b.phase_y) > 2*M_PI) {
-            phase_dir *= -1.0;
-            harmonograph.c.frequency += fq_dir;
-        
-            if (abs(harmonograph.c.frequency) > 3) {
-                fq_dir *= -1.0;
-            }
-        }
+        harmonograph.b.phase_x = (((i % 8)*30)/180.0) * M_PI;
+        harmonograph.b.phase_y = (((i % 8)*30)/180.0) * M_PI;
+        harmonograph.b.frequency = fq_lut[(i+1) % 6];
+        harmonograph.c.frequency = fq_lut[i % 6];        
     }
 
     void run(AppState& st) {
         ScreenBuf screenbuf;
         Harmonograph harmonograph = STARTING_PARAMS;
     
-        for (size_t i = 0;; ++i) {
+        for (size_t i = random();; ++i) {
             tick(i, harmonograph);
 
             st.render_clear();
@@ -320,6 +319,7 @@ namespace {
 }
 
 void setup() {
+    randomSeed(analogRead(0));
     AppState st;
     run(st);
 }
