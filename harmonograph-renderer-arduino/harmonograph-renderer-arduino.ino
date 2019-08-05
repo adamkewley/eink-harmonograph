@@ -5,7 +5,7 @@
 
 
 namespace {
-    using pixelcoord_t = uint16_t;
+    using pixelcoord_t = int16_t;
   
     // screen: widths, segments, etc.
     const pixelcoord_t SCREEN_WIDTH = 400;
@@ -28,7 +28,7 @@ namespace {
         T x;
         T y;
 
-        Point<T> operator +(const Point<T>& o) {
+        Point<T> operator+(const Point<T>& o) {
             return { .x = x + o.x, .y = y + o.y };
         }
     };
@@ -99,7 +99,7 @@ namespace {
 
         void zero() {
             for (size_t i = 0; i < sizeof(buf); ++i) {
-                buf[i] = 0x00;
+                buf[i] = 0xff;
             }
         }
 
@@ -107,12 +107,13 @@ namespace {
             if (bounds.contains(p)) {
                 pixelcoord_t bitbuf_x = p.x - bounds.x;
                 pixelcoord_t bitbuf_y = p.y - bounds.y;
+
+                auto rowstart = bitbuf_y*bounds.w;
+                auto bitidx = rowstart + bitbuf_x;
+                auto byteidx = bitidx / 8;
+                auto bytebitidx = bitidx & 7;
     
-                size_t  bitidx = bitbuf_y*bounds.w + bitbuf_x;
-                size_t byteidx = bitidx / 8;
-                size_t bytebitidx = bitidx & 7;
-    
-                buf[byteidx] |= (0x1 << bytebitidx);
+                buf[bitidx/8] &= ~(0x80 >> (bitidx & 7));
             }
         }
 
