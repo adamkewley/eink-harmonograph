@@ -5,6 +5,20 @@
 
 
 namespace {
+
+    template<size_t N>
+    struct bitset {
+        uint8_t buf[N];
+
+        void set_all() {
+            memset(buf, 0xff, N);
+        }
+
+        void unset(size_t idx) {
+            buf[idx/8] &= ~(0x80 >> (idx & 7));
+        }
+    };
+
     using pixelcoord_t = int16_t;
   
     // screen: widths, segments, etc.
@@ -95,12 +109,10 @@ namespace {
 
     // `buf` is in a format as used by hardware.
     struct ScreenBuf {
-        uint8_t buf[SEGMENT_NUM_BYTES];
+        bitset<SEGMENT_NUM_BYTES> bs;
 
         void zero() {
-            for (size_t i = 0; i < sizeof(buf); ++i) {
-                buf[i] = 0xff;
-            }
+            bs.set_all();
         }
 
         void paint_pixel(const Rect& bounds, const PixelPoint& p) {
@@ -111,9 +123,8 @@ namespace {
                 auto rowstart = bitbuf_y*bounds.w;
                 auto bitidx = rowstart + bitbuf_x;
                 auto byteidx = bitidx / 8;
-                auto bytebitidx = bitidx & 7;
-    
-                buf[bitidx/8] &= ~(0x80 >> (bitidx & 7));
+
+                bs.unset(bitidx);
             }
         }
 
@@ -283,7 +294,7 @@ namespace {
 
                 screenbuf.zero();
                 paint_segment(params, segment, screenbuf);
-                st.render(segment, screenbuf.buf);
+                st.render(segment, screenbuf.bs.buf);
             }
         }
     }
