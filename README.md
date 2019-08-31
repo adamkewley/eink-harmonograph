@@ -1,39 +1,23 @@
-# Harmonograph Renderer
+# eink-harmonograph
 
-A small project I developed over xmas 2018 to produce this
-Arduino-based device:
+Arduino project for rendering a
+[harmonograph](https://en.wikipedia.org/wiki/Harmonograph) image using
+an eink display.
 
-![device image](images/device-picture.jpeg)
-
-The code renders a harmonograph image to the screen as freqeuently as
-it can, which is around one image per minute on a standard Arduino Uno
-(the code is inefficient, but does the job). 
-
-
-## Software
-
-- `harmonograph-sdl2`: C++ software implementation of a harmonograph. Was
-  developed against the target Arduino hardware (e.g. rendering into a
-  bitbuffer), rather than being clean or fast. Put in this repo for archiving
-  
-- `harmonograph-arduino-uno`: Arduino code for the device. Developed +
-  uploaded through standard Arduino IDE (v1.8.8).
+Renders a random harmonograph image as frequently as possible, which
+is about once per minute with the settings in this repo.
 
 
 ## Hardware
 
-- Arduino Uno (I used
-  [this](https://www.amazon.co.uk/Project-Complete-Ultimate-TUTORIAL-controller/dp/B01IUY62RM/ref=sr_1_5?s=computers&ie=UTF8&qid=1546344449&sr=1-5&keywords=elegoo+starter+kit)
-  kit one)
+- Arduino Uno
 
 - Waveshare 4.2 inch E-Ink Display Module ([amazon](https://www.amazon.co.uk/Waveshare-Resolution-Electronic-Interface-Raspberry/dp/B0751J99PS/ref=sr_1_7?s=computers&ie=UTF8&qid=1546344642&sr=1-7&keywords=waveshare+4.2))
 
 - ~8 jumper cables
 
-- A box (mine's a custom-made thing)
 
-
-## Assembly
+### Hardware Assembly
 
 - Wire the screen up to the Arduino according to standard manufacturer
   guide (see
@@ -41,18 +25,70 @@ it can, which is around one image per minute on a standard Arduino Uno
   
 - Connect Arduino to computer
 
-- Upload `harmonograph-arduino-uno` project to the Arduino
+- Build + deploy to the arduino (see below)
 
-- Put it in a nice box
+- Put it in a nice case
+
+- Done: the device should flash harmonograph images to the screen
 
 
-## Known Limitations
+## Software Build & Deploy
+
+- Install `third_party/` as an Arduino library. I modified the demo code from
+  [here](https://www.waveshare.com/wiki/4.2inch_e-Paper_Module) to fix
+  some bugs I encountered (old version of Arduino etc.). The code in
+  `third_party/` includes those modifications
+
+
+### Arduino IDE
+
+This was developed in the standard Arduino IDE (v1.8.8).
+
+TODO
+
+
+### Arduino CLI
+
+This project includes `Makefile` goals for installing + setting up
+[arduino-cli](https://github.com/arduino/arduino-cli). To use those:
+
+```
+# install + setup arduino-cli
+make setup-arduino-cli 
+
+# compile harmonograph binaries
+make compile
+
+# deploy to typical arduino device path
+make deploy
+```
+
+This can be customized with environment variables (see the
+`Makefile`):
+
+```
+ARDUINO_CLI="arduino-cli" ARDUINO_DEV=/dev/ttyACM2 make compile deploy
+```
+
+
+## Simulating
+
+Project includes an SDL2 implementation of the renderer. Requires
+`libsdl2-dev` to be installed.
+
+```bash
+make simulator-run
+```
+
+**Note**: The simulator isn't efficient: it's built with a rendering
+API that's similar to what the Waveshare eInk display needs (so that
+code can be shared between the Arduino and simulator).
+
+## Limitations
 
 - Algorithm is unoptimized: takes ~1 min of constant computation to
   render an image
   
 - Because of the above, cannot run the device on a battery (too much
   drain to run it for multiple days)
-  
-- Doesn't randomize the various harmonograph parameters (weightings,
-  phases, etc.)
+

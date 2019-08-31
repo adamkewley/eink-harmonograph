@@ -1,2 +1,5 @@
 target
 *~
+*.arduino.avr.uno.hex
+*.arduino.avr.uno.elf
+dependencies

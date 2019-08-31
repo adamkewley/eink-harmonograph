@@ -1,28 +1,51 @@
 #!/usr/bin/env make
 
-export PATH := "${PATH}:target"
 ARDUINO_DEV ?= /dev/ttyACM0
 ARDUINO_FQBN ?= arduino:avr:uno
+ARDUINO_CLI ?= dependencies/arduino-cli
+
+dependencies:
+	mkdir -p $@
+
+dependencies/arduino-cli: | dependencies
+	cd dependencies && wget https://github.com/arduino/arduino-cli/releases/download/0.4.0/arduino-cli_0.4.0_Linux_64bit.tar.gz
+	cd dependencies && tar xvf arduino-cli_0.4.0_Linux_64bit.tar.gz
 
 target:
 	mkdir -p $@
 
-target/arduino-cli: | target
-	cd target && wget https://github.com/arduino/arduino-cli/releases/download/0.4.0/arduino-cli_0.4.0_Linux_64bit.tar.gz
-	cd target && tar xvf arduino-cli_0.4.0_Linux_64bit.tar.gz
+target/eink-harmonograph-simulator: eink_harmonograph_sdl2.cpp | target
+	c++ -std=c++11 -g eink_harmonograph_sdl2.cpp -lSDL2 -lm -o $@
+
+target/eink-harmonograph.elf: eink-harmonograph/eink-harmonograph.ino | target
+	${ARDUINO_CLI} compile --fqbn ${ARDUINO_FQBN} eink-harmonograph
 
 
-.PHONY: get-arduino-cli setup-arduino-cli compile deploy
+.PHONY: deps-get-arduino-cli deps-setup-arduino-cli compile deploy simulator-build simulator-run clean
 
-get-arduino-cli: target/arduino-cli
 
-setup-arduino-cli: get-arduino-cli
-	arduino-cli
-	arduino-cli core update-index
-	arduino-cli core install arduino:avr
+# Arduino
 
-compile:
-	arduino-cli compile --fqbn ${ARDUINO_FQBN} harmonograph-renderer-arduino
+deps-get-arduino-cli: dependencies/arduino-cli
+deps-setup-arduino-cli: deps-get-arduino-cli
+	${ARDUINO_CLI}
+	${ARDUINO_CLI} core update-index
+	${ARDUINO_CLI} core install arduino:avr
+
+compile: target/eink-harmonograph.elf
 
 deploy: compile
-	arduino-cli upload -p "${ARDUINO_DEV}" --fqbn ${ARDUINO_FQBN}  harmonograph-renderer-arduino
+	${ARDUINO_CLI} upload -p "${ARDUINO_DEV}" --fqbn ${ARDUINO_FQBN} eink-harmonograph
+
+
+# simulator
+
+simulator-build: target/eink-harmonograph-simulator
+
+simulator-run: simulator-build
+	target/eink-harmonograph-simulator
+
+clean:
+	rm -rf target
+	rm -f eink-harmonograph/eink-harmonograph.hex
+	rm -f eink-harmonograph/eink-harmonograph.elf
