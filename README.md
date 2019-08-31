@@ -2,6 +2,9 @@
 
 ![device vid](demo-vid.gif)
 
+[better quality video](https://adamkewley.com/files/eink-harmonograph.mp4)
+
+
 Arduino project for rendering a
 [harmonograph](https://en.wikipedia.org/wiki/Harmonograph) image using
 an eink display.
@@ -44,9 +47,9 @@ is about once per minute with the settings in this repo.
 
 ### Arduino IDE
 
-This was developed in the standard Arduino IDE (v1.8.8).
-
-TODO
+This was developed in the standard Arduino IDE (v1.8.8). Make sure the
+relevant library (above) is installed and it should (hopefully) just
+upload to your Arduino
 
 
 ### Arduino CLI
