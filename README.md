@@ -1,5 +1,7 @@
 # eink-harmonograph
 
+![device vid](demo-vid.gif)
+
 Arduino project for rendering a
 [harmonograph](https://en.wikipedia.org/wiki/Harmonograph) image using
 an eink display.
