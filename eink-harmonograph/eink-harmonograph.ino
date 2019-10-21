@@ -39,20 +39,21 @@ namespace {
 }
 
 void setup() {
+  pinMode(4, OUTPUT);
+  digitalWrite(4, LOW);
+  
   randomSeed(analogRead(0));
   ArduinoRenderer st;
   Screen screen;
   Harmonograph harmonograph = STARTING_PARAMS;
-    
-  for (size_t i = random();; ++i) {
-    tick(i, harmonograph);
 
-    st.render_clear();
-    render_screen(harmonograph, screen, st);
-    st.render_present();
-  }
+  
+  tick(random(), harmonograph);
+  digitalWrite(4, HIGH);  // keep power source on (via a relay)
+  render_screen(harmonograph, screen, st);
+  st.render_present();  
 }
 
 void loop() {
-  // Setup code runs this
+  digitalWrite(4, LOW); // turn power source off (via a relay)
 }
