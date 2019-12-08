@@ -15,7 +15,7 @@ target:
 	mkdir -p $@
 
 target/eink-harmonograph-simulator: eink_harmonograph_sdl2.cpp | target
-	c++ -std=c++11 -g eink_harmonograph_sdl2.cpp -lSDL2 -lm -o $@
+	c++ -std=c++11 -O2 -g eink_harmonograph_sdl2.cpp -lSDL2 -lm -o $@
 
 target/eink-harmonograph.elf: eink-harmonograph/eink-harmonograph.ino | target
 	${ARDUINO_CLI} compile --fqbn ${ARDUINO_FQBN} eink-harmonograph

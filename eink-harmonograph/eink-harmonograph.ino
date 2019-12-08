@@ -10,21 +10,21 @@
 // interactively.
 #include "harmonograph.hpp"
 
-namespace {  
+namespace {
   class ArduinoRenderer final : public Renderer {
-  public:        
+  public:
     ArduinoRenderer() {
       epd.Init();
     }
 
     void render(const Rect& screen_bounds, uint8_t* buf) override {
-      epd.SetPartialWindow(buf, 
+      epd.SetPartialWindow(buf,
                            screen_bounds.x,
-                           screen_bounds.y, 
-                           screen_bounds.w, 
+                           screen_bounds.y,
+                           screen_bounds.w,
                            screen_bounds.h);
     }
-    
+
     void render_clear() override {
       epd.ClearFrame();
     }
@@ -40,18 +40,18 @@ namespace {
 
 void setup() {
   pinMode(4, OUTPUT);
-  digitalWrite(4, LOW);
-  
+  digitalWrite(4, HIGH);
+
   randomSeed(analogRead(0));
   ArduinoRenderer st;
   Screen screen;
   Harmonograph harmonograph = STARTING_PARAMS;
 
-  
+
   tick(random(), harmonograph);
   digitalWrite(4, HIGH);  // keep power source on (via a relay)
   render_screen(harmonograph, screen, st);
-  st.render_present();  
+  st.render_present();
 }
 
 void loop() {
